@@ -83,9 +83,9 @@ on:
           - perf
       SUSFS_CI:
         type: boolean
-        description: "SUSFS模块下载是否调用CI？"
+        description: "下载SUSFS模块是否使用CI构建？"
         required: true
-        default: false
+        default: true
       VFS:
         type: boolean
         description: "是否启用手动钩子？"
@@ -199,7 +199,6 @@ jobs:
           cp -r ../SukiSU_patch/other/zram/lz4k/include/linux/* ./common/include/linux
           cp -r ../SukiSU_patch/other/zram/lz4k/lib/* ./common/lib
           cp -r ../SukiSU_patch/other/zram/lz4k/crypto/* ./common/crypto
-          cp -r ../SukiSU_patch/other/zram/zstdn ./common/lib/
           cp -r ../SukiSU_patch/other/zram/lz4k_oplus ./common/lib/
           fi
 
@@ -224,7 +223,7 @@ jobs:
           echo "vfs_patch完成"
           fi
 
-      - name: Apply LZ4KD&ZSTDN
+      - name: Apply LZ4KD
         run: |
           cd kernel_workspace/kernel_platform/common
           if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
@@ -232,12 +231,6 @@ jobs:
             echo "正在打lz4kd补丁"
             patch -p1 -F 3 < lz4kd.patch || true
             echo '完成LZ4KD补丁'
-
-            cp ../../SukiSU_patch/other/zram/zram_patch/${{ github.event.inputs.KERNEL_VERSION }}/zstdn.patch ./
-            echo "正在打zstdn补丁"
-            patch -p1 -F 3 < zstdn.patch || true
-            echo '完成ZSTDN补丁'
-          fi
 
       # 配置信息
       - name: Add Configuration Settings
@@ -284,7 +277,7 @@ jobs:
           # Remove check_defconfig
           sed -i 's/check_defconfig//' ./common/build.config.gki
 
-          # LZ4KD&ZSTDN配置
+          # LZ4KD配置
           if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
           CONFIG_FILE=./common/arch/arm64/configs/gki_defconfig
 
@@ -296,11 +289,7 @@ jobs:
               echo "CONFIG_ZRAM_DEF_COMP_LZ4KD=y" >> "$CONFIG_FILE"
             fi
 
-
             if [ "${{ github.event.inputs.KERNEL_VERSION }}" != "6.6" ] && [ "${{ github.event.inputs.KERNEL_VERSION }}" != "5.10" ]; then
-              if [ "${{ github.event.inputs.KERNEL_VERSION }}" != "5.15" ]; then
-                sed -i 's/CONFIG_MODULE_SIG=y/CONFIG_MODULE_SIG=n/g' "$CONFIG_FILE"
-              fi
               if grep -q "CONFIG_ZSMALLOC" -- "$CONFIG_FILE"; then
                 sed -i 's/CONFIG_ZSMALLOC=m/CONFIG_ZSMALLOC=y/g' "$CONFIG_FILE"
               else
@@ -318,10 +307,17 @@ jobs:
               if [  -e ./common/modules.bzl ]; then
                 sed -i 's/"drivers\/block\/zram\/zram\.ko",//g; s/"mm\/zsmalloc\.ko",//g' "./common/modules.bzl"
               fi
+
+              if [  -e ./msm-kernel/modules.bzl ]; then
+                sed -i 's/"drivers\/block\/zram\/zram\.ko",//g; s/"mm\/zsmalloc\.ko",//g' "./msm-kernel/modules.bzl"
+                echo "CONFIG_ZSMALLOC=y" >> "msm-kernel/arch/arm64/configs/${{ github.event.inputs.CPUD }}-GKI.config"
+                echo "CONFIG_ZRAM=y" >> "msm-kernel/arch/arm64/configs/${{ github.event.inputs.CPUD }}-GKI.config"
+              fi
+              
               echo "CONFIG_MODULE_SIG_FORCE=n" >> "$CONFIG_FILE"
-            elif [ "${{ inputs.kernel_version }}" = "5.15" ]; then
-              rm "./common/android/gki_aarch64_modules"
-              touch "./common/android/gki_aarch64_modules"
+            elif [ "${{ github.event.inputs.KERNEL_VERSION }}" = "5.10" ] || [ "${{ github.event.inputs.KERNEL_VERSION }}" = "5.15" ]; then
+              rm "common/android/gki_aarch64_modules"
+              touch "common/android/gki_aarch64_modules"
             fi
 
             if grep -q "CONFIG_ZSMALLOC=y" "$CONFIG_FILE" && grep -q "CONFIG_ZRAM=y" "$CONFIG_FILE"; then
@@ -329,8 +325,6 @@ jobs:
               echo "CONFIG_CRYPTO_LZ4K=y" >> "$CONFIG_FILE"
               echo "CONFIG_CRYPTO_LZ4KD=y" >> "$CONFIG_FILE"
               echo "CONFIG_CRYPTO_842=y" >> "$CONFIG_FILE"
-              echo "CONFIG_CRYPTO_ZSTDN=m" >> "$CONFIG_FILE"
-              echo "CONFIG_CRYPTO_LZ4K_OPLUS=n" >> "$CONFIG_FILE"
             fi
           fi
 
@@ -344,16 +338,18 @@ jobs:
         if: ${{ github.event.inputs.CPU != 'sm8650' && github.event.inputs.CPU != 'sm7675' }}
         run: |
          cd kernel_workspace
-         LTO=thin ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ github.event.inputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
+         LTO=thin SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ github.event.inputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
 
       - name: Make AnyKernel3
         run: |
           git clone https://github.com/Numbersf/AnyKernel3 --depth=1
           rm -rf ./AnyKernel3/.git
 
-          dir1="/home/runner/work/Action_OnePlus_MKSU_SUSFS/Action_OnePlus_MKSU_SUSFS/kernel_workspace/kernel_platform/out/msm-kernel-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/dist/"
-          dir2="/home/runner/work/Action_OnePlus_MKSU_SUSFS/Action_OnePlus_MKSU_SUSFS/kernel_workspace/kernel_platform/out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/gki_kernel/common/out/arch/arm64/boot/"
-          dir3="/home/runner/work/Action_OnePlus_MKSU_SUSFS/Action_OnePlus_MKSU_SUSFS/kernel_workspace/kernel_platform/out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/dist/"
+          dir1="kernel_workspace/kernel_platform/out/msm-kernel-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/dist/"
+          dir2="kernel_workspace/kernel_platform/bazel-out/k8-fastbuild/bin/msm-kernel/${{ github.event.inputs.CPUD }}_gki_kbuild_mixed_tree/"
+          dir3="kernel_workspace/kernel_platform/out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/dist/"
+          dir4="kernel_workspace/kernel_platform/out/msm-kernel-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/gki_kernel/common/arch/arm64/boot/"
+          dir5="kernel_workspace/kernel_platform/out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/gki_kernel/common/arch/arm64/boot/"
           target1="./AnyKernel3/"
           target2="./kernel_workspace/kernel"
 
@@ -364,6 +360,10 @@ jobs:
             image_path="$dir2"Image
           elif find "$dir3" -name "Image" | grep -q "Image"; then
             image_path="$dir3"Image
+          elif find "$dir4" -name "Image" | grep -q "Image"; then
+            image_path="$dir4"Image
+          elif find "$dir5" -name "Image" | grep -q "Image"; then
+            image_path="$dir5"Image
           else
             image_path=$(find "./kernel_workspace/kernel_platform/common/out/" -name "Image" | head -n 1)
           fi
@@ -438,7 +438,7 @@ jobs:
       - name: Set suffix
         id: suffix
         run: |
-          echo "value=${{ github.event.inputs.KPM == 'true' && '_KPM' || '' }}${{ github.event.inputs.VFS == 'true' && '_VFS' || '' }}${{ github.event.inputs.ZRAM == 'true' && '_LZ4KD_ZSTDN' || '' }}" >> $GITHUB_OUTPUT
+          echo "value=${{ github.event.inputs.KPM == 'true' && '_KPM' || '' }}${{ github.event.inputs.VFS == 'true' && '_VFS' || '' }}${{ github.event.inputs.ZRAM == 'true' && '_LZ4KD' || '' }}" >> $GITHUB_OUTPUT
 
       - name: Remove _uv suffix from FEIL
         id: feil_clean
